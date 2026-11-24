@@ -1,0 +1,42 @@
+name: FALCON storage ingestion test
+on:
+  push:
+    branches: [scorpio-ng-2.0]
+    paths: ['.github/workflows/falcon-storage-test.yml']
+  workflow_dispatch:
+permissions: {}
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      REFRESH_SECRET: ${{ secrets.REFRESH_SECRET }}
+      BYPASS_SECRET: ${{ secrets.FALCON_BYPASS_SECRET }}
+    steps:
+      - name: Authenticate and ingest EIA storage
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os, json, urllib.request, urllib.error
+          r = os.environ.get("REFRESH_SECRET", "")
+          b = os.environ.get("BYPASS_SECRET", "")
+          if not r or not b or any(ord(c)<33 or ord(c)>126 for c in r+b):
+              raise SystemExit("Missing or invalid secret characters")
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, *args, **kwargs):
+                  return None
+          req = urllib.request.Request(
+              "https://ngmcx-7182-ngnsbj11d-prateekj17.vercel.app/api/vault/storage",
+              method="POST", headers={"Authorization":"Bearer "+r,
+              "x-vercel-protection-bypass":b})
+          try:
+              with urllib.request.build_opener(NoRedirect()).open(req, timeout=60) as response:
+                  data = json.load(response)
+          except urllib.error.HTTPError as e:
+              raise SystemExit(f"HTTP {e.code}: ingestion not confirmed") from None
+          except Exception:
+              raise SystemExit("Request or JSON response failed") from None
+          if data.get("status") != "OK":
+              raise SystemExit("Ingestion not confirmed")
+          print("Ingestion OK; received:", int(data["received"]), "stored versions:", int(data["storedVersions"]))
+          PY
