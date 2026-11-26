@@ -9,17 +9,17 @@ export async function GET(){
  const url=new URL("https://api.eia.gov/v2/seriesid/NG."+code+".M");
  for(const [k,v] of Object.entries({"api_key":key,"length":"60","sort[0][column]":"period","sort[0][direction]":"desc"}))url.searchParams.set(k,v);
  const res=await fetch(url,{next:{revalidate:3600},signal:AbortSignal.timeout(10000)});
- if(!res.ok)throw Error();
+ if(!res.ok)throw Error("EIA_HTTP_"+res.status);
  const raw=(await res.json()).response?.data;
- if(!Array.isArray(raw))throw Error();
+ if(!Array.isArray(raw))throw Error("MISSING_DATA_ARRAY");
  const rows=raw.filter(r=>r.series===code&&r.units==="MMCF"&&/^\d{4}-\d{2}$/.test(r.period)&&r.value!==null&&r.value!==""&&Number.isFinite(Number(r.value))&&Number(r.value)>=0).map(r=>{
  const [year,month]=String(r.period).split("-").map(Number);
  return {period:String(r.period),bcfPerDay:Number(r.value)/1000/new Date(Date.UTC(year,month,0)).getUTCDate()};
  }).sort((a,b)=>b.period.localeCompare(a.period));
- if(!rows.length)throw Error();
+ if(!rows.length){const sample=raw[0];return {id,label,code,status:"UNAVAILABLE",latest:null,yoyPct:null,history:[],diagnostic:{rowCount:raw.length,series:typeof sample?.series==="string"?sample.series:null,units:typeof sample?.units==="string"?sample.units:null,period:typeof sample?.period==="string"?sample.period:null,fields:sample?Object.keys(sample):[]}};}
  const latest=rows[0],prior=rows.find(r=>r.period===(Number(latest.period.slice(0,4))-1)+latest.period.slice(4));
  return {id,label,code,status:"OK",latest,yoyPct:prior&&prior.bcfPerDay>0?100*(latest.bcfPerDay/prior.bcfPerDay-1):null,history:rows.reverse()};
- }catch{return {id,label,code,status:"UNAVAILABLE",latest:null,yoyPct:null,history:[]};}
+ }catch(e){const message=e instanceof Error?e.message:"";return {id,label,code,status:"UNAVAILABLE",latest:null,yoyPct:null,history:[],diagnostic:/^(EIA_HTTP_\\d+|MISSING_DATA_ARRAY)$/.test(message)?message:"REQUEST_OR_PARSE_FAILED"};}
  }));
  const available=series.filter(s=>s.status==="OK").length;
  return NextResponse.json({status:available===metrics.length?"OK":available?"PARTIAL":"UNAVAILABLE",available,source:"EIA monthly natural gas statistics",retrievedAt:new Date().toISOString(),units:"Bcf/day",series,warning:"Monthly observations are delayed and revisable. Not current production or LNG feedgas flows. Retrieval is not publication time."},{status:available?200:503});
