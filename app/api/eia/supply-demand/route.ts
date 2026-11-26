@@ -1,10 +1,13 @@
 import {NextResponse} from "next/server";
 export const dynamic="force-dynamic";
 const metrics=[["production","Dry gas production","N9070US2"],["lng","LNG exports","N9133US2"],["consumption","Domestic consumption","N9140US2"],["power","Electric power consumption","N3045US2"]] as const;
-export async function GET(){
+export async function GET(req:Request){
  const key=process.env.EIA_API_KEY;
  if(!key)return NextResponse.json({status:"NOT_CONFIGURED"},{status:503});
- const series=await Promise.all(metrics.map(async ([id,label,code])=>{
+ const selected=new URL(req.url).searchParams.get("metric");
+ const active=selected?metrics.filter(m=>m[0]===selected):metrics;
+ if(!active.length)return NextResponse.json({status:"INVALID_METRIC"},{status:400});
+ const series=await Promise.all(active.map(async ([id,label,code])=>{
  try{
  const url=new URL("https://api.eia.gov/v2/seriesid/NG."+code+".M");
  for(const [k,v] of Object.entries({"api_key":key,"length":"60","sort[0][column]":"period","sort[0][direction]":"desc"}))url.searchParams.set(k,v);
@@ -22,5 +25,5 @@ export async function GET(){
  }catch(e){const message=e instanceof Error?e.message:"";return {id,label,code,status:"UNAVAILABLE",latest:null,yoyPct:null,history:[],diagnostic:message.startsWith("EIA_HTTP_")||message==="MISSING_DATA_ARRAY"?message:e instanceof Error?e.name:"UNKNOWN_ERROR"};}
  }));
  const available=series.filter(s=>s.status==="OK").length;
- return NextResponse.json({status:available===metrics.length?"OK":available?"PARTIAL":"UNAVAILABLE",available,source:"EIA monthly natural gas statistics",retrievedAt:new Date().toISOString(),units:"Bcf/day",series,warning:"Monthly observations are delayed and revisable. Not current production or LNG feedgas flows. Retrieval is not publication time."},{status:available?200:503});
+ return NextResponse.json({status:available===active.length?"OK":available?"PARTIAL":"UNAVAILABLE",available,source:"EIA monthly natural gas statistics",retrievedAt:new Date().toISOString(),units:"Bcf/day",series,warning:"Monthly observations are delayed and revisable. Not current production or LNG feedgas flows. Retrieval is not publication time."},{status:available?200:503});
 }
