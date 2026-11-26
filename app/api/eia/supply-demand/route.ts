@@ -9,12 +9,12 @@ export async function GET(req:Request){
  if(!active.length)return NextResponse.json({status:"INVALID_METRIC"},{status:400});
  const series=await Promise.all(active.map(async ([id,label,code])=>{
  try{
- if(id==="production"){
- const sourceUrl="https://www.eia.gov/dnav/ng/hist/n9070us2m.htm";
+ if(id!=="lng"){
+ const sourceUrl="https://www.eia.gov/dnav/ng/hist/"+code.toLowerCase()+"m.htm";
  const res=await fetch(sourceUrl,{next:{revalidate:21600},signal:AbortSignal.timeout(12000)});
  if(!res.ok)throw Error("EIA_HTTP_"+res.status);
  const html=await res.text();
- if(!/U\.S\. Dry Natural Gas Production/i.test(html)||!/Million Cubic Feet/i.test(html))throw Error("UNEXPECTED_TABLE");
+ if(!(id==="production"?/U\.S\. Dry Natural Gas Production/i:id==="consumption"?/U\.S\. Natural Gas Total Consumption/i:/U\.S\. Natural Gas Deliveries to Electric Power Consumers/i).test(html)||!/Million Cubic Feet/i.test(html))throw Error("UNEXPECTED_TABLE");
  const history:{period:string;bcfPerDay:number}[]=[];
  for(const row of html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)){
  const cells=Array.from(row[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi),m=>m[1].replace(/<[^>]*>/g,"").replace(/&nbsp;|&#160;/gi," ").trim());
@@ -28,7 +28,7 @@ export async function GET(req:Request){
  }
  history.sort((a,b)=>a.period.localeCompare(b.period));
  const rows=history.slice(-60),latest=rows[rows.length-1];
- if(rows.length<13||!latest||new Set(rows.map(r=>r.period)).size!==rows.length||latest.bcfPerDay<30||latest.bcfPerDay>200)throw Error("UNEXPECTED_TABLE");
+ if(rows.length<13||!latest||new Set(rows.map(r=>r.period)).size!==rows.length||latest.bcfPerDay<(id==="power"?5:30)||latest.bcfPerDay>200)throw Error("UNEXPECTED_TABLE");
  const prior=rows.find(r=>r.period===(Number(latest.period.slice(0,4))-1)+latest.period.slice(4));
  return {id,label,code,status:"OK",latest,yoyPct:prior&&prior.bcfPerDay>0?100*(latest.bcfPerDay/prior.bcfPerDay-1):null,history:rows,sourceUrl,method:"EIA published historical table"};
  }
