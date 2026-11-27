@@ -1,6 +1,12 @@
 "use client";
 import {useEffect,useState} from "react";
 const sources=[{name:"EIA storage",path:"storage",frequency:"Daily"},{name:"NOAA weather",path:"weather",frequency:"Every 6 hours"},{name:"Global market observations",path:"global",frequency:"Daily"}];
+function ageLabel(value:unknown,reference:string){
+ if(typeof value!=="string"||!reference)return "Unknown";
+ const hours=(Date.parse(reference)-Date.parse(value))/3600000;
+ if(!Number.isFinite(hours)||hours<0)return "Unknown";
+ return hours<24?Math.floor(hours)+" hours":(hours/24).toFixed(1)+" calendar days";
+}
 type Result={status:string;[key:string]:unknown};
 export default function Vault(){
  const [data,setData]=useState<Record<string,Result>>({});
@@ -14,8 +20,9 @@ export default function Vault(){
  <p>Database-reported coverage • Automatic refresh every minute</p><p>Last dashboard check: {updated||"Loading"}</p>
  {sources.map(s=>{const d=data[s.path];return <section key={s.path} style={{border:"1px solid #334155",borderRadius:12,padding:20,marginTop:16}}>
  <h2 style={{fontSize:22}}>{s.name}</h2><p>Collection schedule: {s.frequency}</p><p style={{color:d?.status==="OK"?"#86efac":"#fbbf24"}}>{d?.status||"CHECKING"} — database response, not a freshness guarantee</p>
+ {d?.latest&&typeof d.latest==="string"?<p>Latest observation age: {ageLabel(d.latest,updated)}</p>:null}
  {d&&Object.entries(d).filter(([k])=>k!=="status"&&k!=="rows").map(([k,v])=><p key={k}>{k}: {String(v??"Unknown")}</p>)}
- {Array.isArray(d?.rows)&&d.rows.map((r:Record<string,unknown>,i:number)=><div key={i} style={{borderTop:"1px solid #334155",paddingTop:10}}>{Object.entries(r).map(([k,v])=><p key={k}>{k}: {String(v??"Unknown")}</p>)}</div>)}
+ {Array.isArray(d?.rows)&&d.rows.map((r:Record<string,unknown>,i:number)=><div key={i} style={{borderTop:"1px solid #334155",paddingTop:10}}><p>Observation age: {ageLabel(r.latest,updated)} · Last archive age: {ageLabel(r.last_capture,updated)}</p>{Object.entries(r).map(([k,v])=><p key={k}>{k}: {String(v??"Unknown")}</p>)}</div>)}
  </section>;})}
  <section style={{marginTop:20}}><h2>Pending feeds</h2><p>MCX and NYMEX futures: authorized feed required. Henry Hub spot is not a futures quote.</p><p>Scheduled run success, source freshness and historical completeness require separate validation.</p></section>
  </main>;
