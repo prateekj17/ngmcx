@@ -1,0 +1,52 @@
+name: FALCON daily CFTC memory
+on:
+  schedule:
+    - cron: '45 21 * * *'
+  workflow_dispatch:
+permissions: {}
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      REFRESH_SECRET: ${{ secrets.REFRESH_SECRET }}
+      BYPASS_SECRET: ${{ secrets.FALCON_BYPASS_SECRET }}
+    steps:
+      - name: Archive official CFTC positioning
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os, json, urllib.request, urllib.error, time
+          r = os.environ.get("REFRESH_SECRET", "")
+          b = os.environ.get("BYPASS_SECRET", "")
+          if not r or not b or any(ord(c)<33 or ord(c)>126 for c in r+b):
+              raise SystemExit("Missing or invalid secret characters")
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, *args, **kwargs):
+                  return None
+          req = urllib.request.Request(
+              "https://ngmcx-7182-git-scorpio-ng-20-prateekj17.vercel.app/api/vault/cot",
+              method="POST", headers={"Authorization":"Bearer "+r,
+              "x-vercel-protection-bypass":b})
+          for attempt in range(1, 4):
+              try:
+                  with urllib.request.build_opener(NoRedirect()).open(req, timeout=60) as response:
+                      data = json.load(response)
+                  break
+              except urllib.error.HTTPError as e:
+                  print(f"Attempt {attempt}: HTTP {e.code}", flush=True)
+                  if e.code not in (408, 429, 500, 502, 503, 504) or attempt == 3:
+                      raise SystemExit("Ingestion not confirmed") from None
+              except (OSError, ValueError):
+                  print(f"Attempt {attempt}: request or response failed", flush=True)
+                  if attempt == 3:
+                      raise SystemExit("Ingestion not confirmed") from None
+              time.sleep(15 * attempt)
+          if data.get("status") != "OK":
+              raise SystemExit("Ingestion not confirmed")
+          results = data.get("results", [])
+          if {r.get("series") for r in results if r.get("status") == "OK" and r.get("received", 0) > 0} != {"COT_NG"}:
+              raise SystemExit("CFTC series not confirmed")
+          for r in results:
+              print(r["series"], "received:", r["received"], "inserted:", r["inserted"], "latest:", r["latest"])
+          PY
