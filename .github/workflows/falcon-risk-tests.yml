@@ -2,6 +2,8 @@ name: FALCON Risk Tests
 on:
   push:
     branches: [scorpio-ng-2.0]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
@@ -14,5 +16,11 @@ jobs:
         with:
           node-version: '22'
       - run: npm install --no-audit --no-fund
-      - run: npx tsc --strict --skipLibCheck --target ES2020 --module commonjs --outDir /tmp/falcon-risk lib/risk-gate.ts tests/risk-gate.test.ts
+      - name: Compile research modules and regression tests
+        run: npx tsc --strict --skipLibCheck --target ES2020 --module commonjs --outDir /tmp/falcon-risk lib/risk-gate.ts lib/risk-research.ts lib/daily-range.ts tests/risk-gate.test.ts tests/daily-range.test.ts
       - run: node /tmp/falcon-risk/tests/risk-gate.test.js
+      - run: node /tmp/falcon-risk/tests/daily-range.test.js
+      - name: Full application type check
+        run: npx tsc --noEmit
+      - name: Production build check
+        run: npm run build
