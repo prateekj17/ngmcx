@@ -1,0 +1,56 @@
+name: FALCON Archive Pilot
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  pilot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      AUTHORIZED: ${{ vars.MCX_DATA_AUTHORIZED }}
+    steps:
+      - name: Verify compressed archive
+        run: |
+          python - <<'PY'
+          import os, urllib.request, gzip, csv, io, json, pathlib, hashlib
+          if os.environ.get("AUTHORIZED") != "true":
+              raise SystemExit("Bulk data permission must be confirmed first")
+          out=pathlib.Path("archive-pilot")
+          out.mkdir()
+          def fetch(url,limit):
+              with urllib.request.urlopen(url,timeout=30) as r:
+                  b=r.read(limit+1)
+              if len(b)>limit: raise ValueError("Response exceeds limit")
+              return b
+          index=json.loads(fetch("https://mtf.trading/mcx/index.json",2000000))
+          dates=index["dates"]
+          assert len(dates)==index["count"]==len({x["date"] for x in dates})
+          day="20261015"
+          expected=next(x["rows"] for x in dates if x["date"]==day)
+          raw=fetch("https://mtf.trading/mcx/"+day+".csv.gz",20000000)
+          with gzip.GzipFile(fileobj=io.BytesIO(raw)) as g:
+              decoded=g.read(50000001)
+          if len(decoded)>50000000: raise ValueError("Expanded archive too large")
+          reader=csv.DictReader(io.StringIO(decoded.decode("utf-8-sig")))
+          if reader.fieldnames!=index["columns"]: raise ValueError("Schema mismatch")
+          rows=list(reader)
+          if len(rows)!=expected: raise ValueError("Index row count mismatch")
+          selected=[r for r in rows if r["Symbol"].strip() in ("NATURALGAS","NATGASMINI") and r["InstrumentName"].strip()=="FUTCOM"]
+          if not selected: raise ValueError("No gas futures")
+          keys=[(r["Date"],r["Symbol"].strip(),r["ExpiryDate"]) for r in selected]
+          if len(keys)!=len(set(keys)): raise ValueError("Duplicate futures")
+          with (out/"gas.csv").open("w",newline="") as f:
+              w=csv.DictWriter(f,fieldnames=reader.fieldnames)
+              w.writeheader()
+              w.writerows(selected)
+          report=dict(day=day,indexed_sessions=len(dates),expected=expected,actual=len(rows),gas_rows=len(selected),sha256=hashlib.sha256(raw).hexdigest(),status="STRUCTURAL_CHECK_ONLY")
+          (out/"report.json").write_text(json.dumps(report,indent=2))
+          print(json.dumps(report))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: falcon-archive-pilot
+          path: archive-pilot/
+          retention-days: 7
