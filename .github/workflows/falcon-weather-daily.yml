@@ -1,0 +1,70 @@
+name: FALCON NOAA daily weather batch
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - run: sudo apt-get update && sudo apt-get install -y python3-eccodes
+      - name: Extract sampled forecast temperatures
+        run: |
+          /usr/bin/python3 - <<'PY'
+          import urllib.request, json, hashlib, datetime, math
+          from pathlib import Path
+          import eccodes as ec
+          cities={'Chicago':(41.88,-87.63),'New York':(40.71,-74.01),'Houston':(29.76,-95.37),'Minneapolis':(44.98,-93.27)}
+          rows=[]
+          for hour,lead in [(h,l) for h in ['00','12'] for l in range(24 if h=='00' else 12,48 if h=='00' else 36,6)]:
+              base=f'https://noaa-gfs-bdp-pds.s3.amazonaws.com/gfs.20240115/{hour}/atmos/gfs.t{hour}z.pgrb2.0p25.f{lead:03d}'
+              with urllib.request.urlopen(base+'.idx',timeout=30) as r:
+                  lines=r.read(1000000).decode().splitlines()
+              matches=[i for i,l in enumerate(lines) if ':TMP:2 m above ground:' in l]
+              assert len(matches)==1
+              i=matches[0]
+              start=int(lines[i].split(':')[1]); end=int(lines[i+1].split(':')[1])-1
+              assert 0<end-start+1<20000000
+              req=urllib.request.Request(base,headers={'Range':f'bytes={start}-{end}'})
+              with urllib.request.urlopen(req,timeout=60) as r:
+                  assert r.status==206 and r.headers.get('Content-Range','').startswith(f'bytes {start}-{end}/')
+                  raw=r.read(end-start+2)
+              assert len(raw)==end-start+1
+              gid=ec.codes_new_from_message(raw)
+              try:
+                  assert ec.codes_get(gid,'shortName')=='2t'
+                  assert ec.codes_get(gid,'units')=='K'
+                  assert ec.codes_get(gid,'dataDate')==20240115
+                  assert ec.codes_get(gid,'dataTime')==int(hour)*100
+                  assert int(ec.codes_get(gid,'endStep'))==lead
+                  run=datetime.datetime(2024,1,15,int(hour),tzinfo=datetime.timezone.utc)
+                  for city,(lat,lon) in cities.items():
+                      p=ec.codes_grib_find_nearest(gid,lat,lon%360)[0]
+                      k=float(p['value']); assert math.isfinite(k) and 180<k<340
+                      rows.append(dict(city=city,run_utc=run.isoformat(),target_utc=(run+datetime.timedelta(hours=lead)).isoformat(),temperature_k=k,temperature_f=(k-273.15)*1.8+32,grid_lat=p['lat'],grid_lon=p['lon'],source=base,sha256=hashlib.sha256(raw).hexdigest(),available_at=None))
+              finally:
+                  ec.codes_release(gid)
+          assert len(rows)==32
+          daily=[]
+          for city in cities:
+              for hour in ['00','12']:
+                  subset=[r for r in rows if r['city']==city and r['run_utc'][11:13]==hour]
+                  assert len(subset)==4
+                  mean=sum(r['temperature_f'] for r in subset)/4
+                  daily.append(dict(city=city,run_utc=subset[0]['run_utc'],target_day='2024-01-16',mean_f=mean,hdd=max(0,65-mean),cdd=max(0,mean-65),method='four UTC six-hour samples',available_at=None))
+          revisions=[]
+          for city in cities:
+              a,b=[r for r in daily if r['city']==city]
+              revisions.append(dict(city=city,target_day=a['target_day'],delta_hdd=b['hdd']-a['hdd'],delta_cdd=b['cdd']-a['cdd']))
+          Path('weather-daily.json').write_text(json.dumps(dict(daily=daily,revisions=revisions),indent=2))
+          print(json.dumps(daily,indent=2))
+          Path('weather-temperatures.json').write_text(json.dumps(rows,indent=2))
+          print(json.dumps(rows,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: falcon-weather-daily
+          path: |
+            weather-temperatures.json
+            weather-daily.json
