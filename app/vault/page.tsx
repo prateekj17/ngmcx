@@ -1,6 +1,6 @@
 "use client";
 import {useEffect,useState} from "react";
-const sources=[{name:"EIA storage",path:"storage",frequency:"Daily"},{name:"NOAA weather",path:"weather",frequency:"Every 6 hours"},{name:"Global market observations",path:"global",frequency:"Daily"}];
+const sources=[{name:"EIA supply and demand",path:"fundamentals",frequency:"Daily capture of monthly releases"},{name:"EIA storage",path:"storage",frequency:"Daily"},{name:"NOAA weather",path:"weather",frequency:"Every 6 hours"},{name:"Global market observations",path:"global",frequency:"Daily"}];
 function ageLabel(value:unknown,reference:string){
  if(typeof value!=="string"||!reference)return "Unknown";
  const hours=(Date.parse(reference)-Date.parse(value))/3600000;
