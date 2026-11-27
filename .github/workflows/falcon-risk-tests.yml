@@ -17,11 +17,12 @@ jobs:
           node-version: '22'
       - run: npm install --no-audit --no-fund
       - name: Compile research modules and regression tests
-        run: npx tsc --strict --skipLibCheck --target ES2020 --module commonjs --outDir /tmp/falcon-risk lib/risk-gate.ts lib/risk-research.ts lib/daily-range.ts tests/risk-gate.test.ts tests/daily-range.test.ts tests/risk-research.test.ts lib/falcon-brain.ts tests/falcon-brain.test.ts
+        run: npx tsc --strict --skipLibCheck --target ES2020 --module commonjs --outDir /tmp/falcon-risk lib/risk-gate.ts lib/risk-research.ts lib/daily-range.ts tests/risk-gate.test.ts tests/daily-range.test.ts tests/risk-research.test.ts lib/falcon-brain.ts tests/falcon-brain.test.ts lib/historical-context.ts tests/historical-context.test.ts
       - run: node /tmp/falcon-risk/tests/risk-gate.test.js
       - run: node /tmp/falcon-risk/tests/daily-range.test.js
       - run: node /tmp/falcon-risk/tests/risk-research.test.js
       - run: node /tmp/falcon-risk/tests/falcon-brain.test.js
+      - run: node /tmp/falcon-risk/tests/historical-context.test.js
       - name: Full application type check
         run: npx tsc --noEmit
       - name: Production build check
