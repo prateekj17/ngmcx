@@ -17,7 +17,10 @@ export async function POST(req:Request){
  await sql`CREATE TABLE IF NOT EXISTS falcon_eia_storage_vintages (period date NOT NULL, bcf numeric NOT NULL CHECK(bcf>=0), first_seen_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(period,bcf))`;
  await sql`INSERT INTO falcon_eia_storage_vintages(period,bcf) SELECT period,bcf FROM jsonb_to_recordset(${JSON.stringify(rows)}::jsonb) AS x(period date,bcf numeric) ON CONFLICT DO NOTHING`;
  const count=await sql`SELECT count(*)::int AS count FROM falcon_eia_storage_vintages`;
- return NextResponse.json({status:"OK",received:rows.length,storedVersions:Number(count[0].count),warning:"First seen timestamps are ingestion times, not original EIA release times."});
+ await sql`CREATE TABLE IF NOT EXISTS falcon_eia_storage_observations (id bigserial PRIMARY KEY, period date NOT NULL, bcf numeric NOT NULL CHECK(bcf>=0), retrieved_at timestamptz NOT NULL DEFAULT now())`;
+ await sql`CREATE INDEX IF NOT EXISTS falcon_eia_obs_period_idx ON falcon_eia_storage_observations(period,id DESC)`;
+ const archived=await sql`INSERT INTO falcon_eia_storage_observations(period,bcf) SELECT period,bcf FROM jsonb_to_recordset(${JSON.stringify(rows)}::jsonb) AS x(period date,bcf numeric) RETURNING id`;
+ return NextResponse.json({status:"OK",received:rows.length,storedVersions:Number(count[0].count),archivedObservations:archived.length,warning:"First seen timestamps are ingestion times, not original EIA release times."});
  }catch{return NextResponse.json({status:"INGEST_FAILED"},{status:502});}
 }
 export async function GET(){
