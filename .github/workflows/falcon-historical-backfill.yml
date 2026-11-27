@@ -1,0 +1,75 @@
+name: FALCON Historical Backfill
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: Start date (YYYY-MM-DD)
+        required: true
+        default: '2022-01-03'
+      end:
+        description: End date (YYYY-MM-DD)
+        required: true
+        default: '2022-01-07'
+permissions:
+  contents: read
+concurrency:
+  group: falcon-historical-backfill
+  cancel-in-progress: false
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      START: ${{ inputs.start }}
+      END: ${{ inputs.end }}
+      AUTHORIZED: ${{ vars.MCX_DATA_AUTHORIZED }}
+    steps:
+      - name: Download authorized archive
+        run: |
+          python - <<'PY'
+          import os, datetime, urllib.request, urllib.parse, time, pathlib, csv, io, json, hashlib
+          if os.environ.get("AUTHORIZED") != "true":
+              raise SystemExit("Bulk data permission must be confirmed first")
+          start = datetime.date.fromisoformat(os.environ["START"])
+          end = datetime.date.fromisoformat(os.environ["END"])
+          if end < start or (end-start).days > 366:
+              raise SystemExit("Choose a batch of at most 367 calendar days")
+          out = pathlib.Path("historical-intake")
+          out.mkdir()
+          manifest = []
+          day = start
+          while day <= end:
+              if day.weekday() < 5:
+                  for symbol in ("NATURALGAS", "NATGASMINI"):
+                      query = urllib.parse.urlencode(dict(date=day.isoformat(),symbol=symbol,instr="FUTCOM",format="csv"))
+                      url = "https://mtf.trading/api/v1/mcx?" + query
+                      record = dict(day=day.isoformat(),symbol=symbol,url=url)
+                      try:
+                          with urllib.request.urlopen(url,timeout=30) as response:
+                              raw = response.read(2000001)
+                          if len(raw)>2000000:
+                              raise ValueError("Response too large")
+                          reader = csv.DictReader(io.StringIO(raw.decode("utf-8-sig")))
+                          rows = list(reader)
+                          if not reader.fieldnames or len(reader.fieldnames)<5 or any(None in row for row in rows):
+                              raise ValueError("Unexpected CSV structure")
+                          name = f"{day}_{symbol}.csv"
+                          (out/name).write_bytes(raw)
+                          record.update(status="DOWNLOADED_UNVALIDATED",rows=len(rows),sha256=hashlib.sha256(raw).hexdigest(),file=name)
+                      except Exception as e:
+                          record.update(status="FAILED",error=str(e))
+                      manifest.append(record)
+                      (out/"manifest.json").write_text(json.dumps(manifest,indent=2))
+                      time.sleep(3)
+              day += datetime.timedelta(days=1)
+          print(json.dumps(dict(requests=len(manifest),downloaded=sum(r["status"]=="DOWNLOADED_UNVALIDATED" for r in manifest))))
+          if not manifest or any(r["status"]=="FAILED" for r in manifest):
+              raise SystemExit("Incomplete batch; inspect manifest")
+          PY
+      - name: Preserve raw intake and manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: falcon-historical-intake
+          path: historical-intake/
+          retention-days: 7
