@@ -1,0 +1,40 @@
+name: FALCON NOAA archive pilot
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check historical GFS forecast index availability
+        run: |
+          python - <<'PY'
+          import urllib.request, json, hashlib
+          from pathlib import Path
+          results = []
+          for day in ['20240115','20240715','20260115']:
+              for hour in ['00','12']:
+                  for lead in ['024','048','072']:
+                      url = f'https://noaa-gfs-bdp-pds.s3.amazonaws.com/gfs.{day}/{hour}/atmos/gfs.t{hour}z.pgrb2.0p25.f{lead}.idx'
+                      item = dict(run_date=day, run_hour_utc=hour, lead_hours=int(lead), url=url)
+                      try:
+                          with urllib.request.urlopen(url, timeout=15) as response:
+                              raw = response.read(1000001)
+                          if len(raw)>1000000: raise ValueError('Index exceeds limit')
+                          lines = raw.decode().splitlines()
+                          matches = [line for line in lines if ':TMP:2 m above ground:' in line]
+                          item.update(status='AVAILABLE' if len(matches)==1 else 'UNEXPECTED_INDEX', temperature_entries=matches, sha256=hashlib.sha256(raw).hexdigest())
+                      except Exception as exc:
+                          item.update(status='UNAVAILABLE', error=str(exc))
+                      results.append(item)
+          Path('weather-pilot.json').write_text(json.dumps(results, indent=2))
+          print(json.dumps(results, indent=2))
+          if not all(r['status']=='AVAILABLE' for r in results): raise SystemExit('Archive coverage incomplete')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: falcon-weather-pilot
+          path: weather-pilot.json
