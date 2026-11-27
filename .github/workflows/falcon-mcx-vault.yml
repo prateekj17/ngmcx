@@ -1,0 +1,47 @@
+name: FALCON MCX vault
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: Start date YYYY-MM-DD (blank for previous IST day)
+        required: false
+      end:
+        description: End date YYYY-MM-DD (blank for start date)
+        required: false
+  schedule:
+    - cron: '30 20 * * *'
+permissions:
+  contents: read
+concurrency:
+  group: falcon-mcx-vault
+  cancel-in-progress: false
+jobs:
+  ingest:
+    if: vars.MCX_DATA_AUTHORIZED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      START: ${{ inputs.start }}
+      END: ${{ inputs.end }}
+      REFRESH_SECRET: ${{ secrets.REFRESH_SECRET }}
+      BYPASS: ${{ secrets.FALCON_BYPASS_SECRET }}
+      VAULT_URL: https://ngmcx-7182-git-scorpio-ng-20-prateekj17.vercel.app/api/vault/mcx
+    steps:
+      - name: Import authorized sessions
+        run: |
+          python - <<'PY'
+          import os, datetime as d, json, urllib.request, time
+          yesterday = (d.datetime.now(d.timezone(d.timedelta(hours=5,minutes=30))).date()-d.timedelta(days=1))
+          start=d.date.fromisoformat(os.environ['START']) if os.environ['START'] else yesterday
+          end=d.date.fromisoformat(os.environ['END']) if os.environ['END'] else start
+          if not 0 <= (end-start).days <= 30 or end>yesterday:
+              raise SystemExit('Use a completed range of at most 31 calendar days')
+          for i in range((end-start).days+1):
+              day=start+d.timedelta(days=i)
+              req=urllib.request.Request(os.environ['VAULT_URL'],data=json.dumps({'day':str(day)}).encode(),headers={'Content-Type':'application/json','Authorization':'Bearer '+os.environ['REFRESH_SECRET'],'x-vercel-protection-bypass':os.environ['BYPASS']},method='POST')
+              with urllib.request.urlopen(req,timeout=75) as res:
+                  result=json.load(res)
+              if result.get('status')!='OK': raise SystemExit('Ingestion failed: '+str(day))
+              print(day, 'received',result['received'],'inserted',result['inserted'])
+              time.sleep(2)
+          PY

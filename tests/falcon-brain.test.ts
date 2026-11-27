@@ -1,0 +1,20 @@
+import {rankContracts, ContractEvidence} from "../lib/falcon-brain";
+const day="2026-11-26";
+const base:ContractEvidence={symbol:"NATURALGAS",expiry:"2027-01-25",day,volume:100,oi:200,close:300};
+const run=(rows:ContractEvidence[])=>rankContracts(rows,day,100,100);
+let count=0;
+function check(ok:boolean,label:string){if(!ok)throw new Error(label);count++;}
+check(run([base]).candidates[0].eligible,"valid contract");
+check(run([base]).decision==="NO_TRADE","research never authorizes trade");
+check(!run([{...base,day:"2026-11-25"}]).candidates[0].eligible,"stale");
+check(!run([{...base,expiry:day}]).candidates[0].eligible,"expiry day");
+check(!run([{...base,volume:99}]).candidates[0].eligible,"volume");
+check(!run([{...base,oi:99}]).candidates[0].eligible,"OI");
+check(!run([{...base,close:NaN}]).candidates[0].eligible,"invalid close");
+check(!run([{...base,volume:100.5}]).candidates[0].eligible,"fractional lots");
+check(run([base,{...base,symbol:"NATGASMINI",volume:400}]).candidates[0].symbol==="NATURALGAS","normalized liquidity");
+check(run([base,{...base,symbol:"NATGASMINI",volume:600}]).candidates[0].symbol==="NATGASMINI","mini can lead");
+check(run([]).decision==="NO_TRADE","empty universe");
+let rejected=false;try{run([base,base]);}catch{rejected=true;}check(rejected,"duplicate");
+rejected=false;try{rankContracts([base],day,0,100);}catch{rejected=true;}check(rejected,"invalid configuration");
+console.log("FALCON BRAIN: "+count+" checks passed");
